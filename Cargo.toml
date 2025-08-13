@@ -1,0 +1,71 @@
+[package]
+name = "gpu-kernel-batcher"
+version = "0.1.0"
+edition = "2021"
+authors = ["Venkat Raman <vraman2811@gmail.com>", "Claude", "Gemini 2.5 Pro"]
+description = "Multi-process CUDA kernel launch optimizer with shared memory IPC"
+license = "MIT"
+
+[[bin]]
+name = "producer"
+path = "src/bin/producer.rs"
+
+[[bin]]
+name = "consumer"
+path = "src/bin/consumer.rs"
+
+[[bin]]
+name = "orchestrator"
+path = "src/bin/orchestrator.rs"
+
+[lib]
+name = "cklo"
+path = "src/lib/mod.rs"
+
+[dependencies]
+# Core error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# CLI parsing
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# IPC and memory
+nix = { version = "0.27", features = ["mman", "fs", "signal"] }
+bytemuck = { version = "1.14", features = ["derive"] }
+libc = "0.2"
+
+# CUDA
+cudarc = { version = "0.12", features = ["cuda-12020", "cublas", "cublaslt", "f16"] }
+half = { version = "2.4", features = ["bytemuck"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+csv = "1.3"
+
+# Signal handling
+ctrlc = "3.4"
+
+# Time measurement
+chrono = "0.4"
+
+# Collections
+rustc-hash = "1.1"
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = false
+
+[profile.bench]
+inherits = "release"
+debug = true
