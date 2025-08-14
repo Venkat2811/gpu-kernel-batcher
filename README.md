@@ -27,13 +27,13 @@ Intended use:
 
 # The Scale of the Problem: Kernel Launches in LLMs
 
-In LLaMA-70B:
+**In LLaMA-70B:**
 
 Each of the model's 80 transformer layers requires about 15 individual kernel launches per token generated (~8 for the attention block and ~7 for the feed-forward MLP). This results in approximately **1,200 launches per token**.
 
 Generating a standard 2048-token response therefore triggers over **2.5 million separate kernel calls**, highlighting why reducing launch overhead is critical for performance.
 
-All Claude code users are familiar with **"You are absolutely right."**
+**All Claude code users are familiar with "You are absolutely right."**
 
 While Claude model architecture is not publicly known, we can guesstimate kernel launches. We have 5 tokens.
 
@@ -47,7 +47,9 @@ Total overhead = 12B \* 5us = 60,000s = 1,000min = ~16.7hr
 
 This is just for the first 5 tokens.
 
-**Today's SOTA inference engines and kernels have several optimizations to reduce this, so the above numbers are not true anymore**:
+**The above numbers are not true anymore.**
+
+Today's SOTA inference engines and kernels have several optimizations to reduce this:
 
 - CUDA graphs
 - Kernel fusion
