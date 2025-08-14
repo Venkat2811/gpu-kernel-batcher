@@ -4,6 +4,27 @@ This document provides a technical overview of the CUDA Kernel Launch Optimizer 
 
 Built with assistance from Claude and Gemini 2.5 Pro.
 
+## Scope and Limitations
+
+This project is a simulation to isolate and measure kernel launch overhead and the benefit of shape-based batching. It is NOT an inference engine.
+
+What it simulates:
+
+- Producer/consumer over POSIX SHM (SPSC ring)
+- Shape bucketing and batched execution via cuBLAS strided-batched GEMM (FP32/FP16)
+- Launch vs. batched kernel counts, wall-clock timing, optional CUDA event timing
+
+What it does not simulate:
+
+- Real model execution (no attention kernels, KV cache, CUDA Graphs, kernel fusion, or paging)
+- Stream scheduling, or multi-GPU
+- End-to-end throughput/latency of LLM serving
+- Numerical correctness on real data (buffers are zero-initialized, no result verification by default)
+
+Intended use:
+
+- A clean, reproducible harness to study how batching reduces launch overhead in decode-like workloads.
+
 # The Scale of the Problem: Kernel Launches in LLMs
 
 In LLaMA-70B:
@@ -16,24 +37,23 @@ All Claude code users are familiar with **"You are absolutely right."**
 
 While Claude model architecture is not publicly known, we can guesstimate kernel launches. We have 5 tokens.
 
-At anthropic scale, 10M req/day out of which 2M responses/day, has these 5 tokens, then 2M * 5 = 10M tokens/day.
+At anthropic scale, 10M req/day out of which 2M responses/day, has these 5 tokens, then 2M \* 5 = 10M tokens/day.
 
-Kernel launches per day = 10M * 1200 = 12B
+Kernel launches per day = 10M \* 1200 = 12B
 
 Overhead per kernel launch = 5us
 
-Total overhead = 12B * 5us = 60,000s = 1,000min = ~16.7hr
+Total overhead = 12B \* 5us = 60,000s = 1,000min = ~16.7hr
 
 This is just for the first 5 tokens.
 
+**Today's SOTA inference engines and kernels have several optimizations to reduce this, so the above numbers are not true anymore**:
 
-Today's SOTA inference engines and kernels have several optimizations to reduce this, so the above numbers are not true anymore:
 - CUDA graphs
 - Kernel fusion
 - Persistent kernels
 - Megakernels
 - KV cache optimizations - paging, radix attention, flash attention, etc.,
-
 
 ## 1. System Architecture
 
@@ -77,10 +97,10 @@ This project uses a decoupled two-process architecture to simulate the relations
                                                                     '----------.------------'
                                                                                |
                                                                                v
-                                                                    +---------------------+ 
-                                                                    |         GPU         |
-                                                                    |      (cuBLASLt)     |
-                                                                    +---------------------+
+                                                                     +---------------------+
+                                                                     |         GPU         |
+                                                                     |        (cuBLAS)     |
+                                                                     +---------------------+
 ```
 
 ### Context: Modern LLM Inference Engine Architecture
@@ -170,7 +190,7 @@ To understand the optimization, think about two kinds of batching:
 
 1.  **The Carpool (Standard Batching)**: A single command can already represent a "batch" of users. Think of it as a carpool taking multiple people at once. This is standard practice.
 
-2.  **The Convoy (Our Optimization)**: This is our project's key trick. When we see multiple, identical carpools (i.e., commands with the same matrix shape) going to the same destination, we group them into a single, highly-efficient convoy—one big `cuBLASLt` strided-batched launch. This is where we save on overhead.
+2.  **The Convoy (Our Optimization)**: This is our project's key trick. When we see multiple, identical carpools (i.e., commands with the same matrix shape) going to the same destination, we group them into a single, highly-efficient convoy—one big cuBLAS strided-batched launch. This is where we save on overhead.
 
 These workloads **intentionally simulate only the GEMM steps** to focus on this second level of batching, which is the primary source of performance improvement.
 
@@ -234,9 +254,9 @@ Here's how one step in the loop works:
 
 1.  **GEMV**: A single token (represented as a vector) is multiplied by the large model weights. This is the `(1 x K) * (K x N)` operation that the project focuses on. The `GemmCommand` in this project is a perfect simulation of one of these Q, K, or V projection steps for a batch of users.
 2.  **Logits**: The result is a vector of raw scores called **logits**. This vector is very large, with one score for every possible token in the model's vocabulary (e.g., ~32,000 scores).
-3.  **Sampling**: The logits are used to select the *next* token. This is a multi-step process:
-    *   A `softmax` function converts the raw logit scores into a probability distribution.
-    *   A **sampling** algorithm (e.g., top-k, top-p, or simple greedy argmax) chooses a single token ID from this distribution.
+3.  **Sampling**: The logits are used to select the _next_ token. This is a multi-step process:
+    - A `softmax` function converts the raw logit scores into a probability distribution.
+    - A **sampling** algorithm (e.g., top-k, top-p, or simple greedy argmax) chooses a single token ID from this distribution.
 
 This chosen token then becomes the input for the very next iteration of the loop.
 
@@ -244,10 +264,10 @@ This chosen token then becomes the input for the very next iteration of the loop
 
 Looking into popular inference engines like **vLLM** and **SGLang** reveals a hybrid approach:
 
-*   **CPU Orchestration**: The high-level sampling logic (e.g., applying temperature, choosing top-k vs top-p) is controlled by Python code on the CPU.
-*   **GPU Execution**: The actual computation of running the sampling algorithm on the massive logits tensor is often offloaded to a highly optimized CUDA kernel (e.g., from the **FlashInfer** library) for maximum performance.
+- **CPU Orchestration**: The high-level sampling logic (e.g., applying temperature, choosing top-k vs top-p) is controlled by Python code on the CPU.
+- **GPU Execution**: The actual computation of running the sampling algorithm on the massive logits tensor is often offloaded to a highly optimized CUDA kernel (e.g., from the **FlashInfer** library) for maximum performance.
 
-This entire loop of tiny, sequential operations is what makes the decode phase bottlenecked by kernel launch overhead. As the vLLM team notes, *"the performance bottleneck of vLLM is mainly caused by the CPU overhead that blocks the GPU execution."* This is precisely the problem the project's batching mechanism solves.
+This entire loop of tiny, sequential operations is what makes the decode phase bottlenecked by kernel launch overhead. As the vLLM team notes, _"the performance bottleneck of vLLM is mainly caused by the CPU overhead that blocks the GPU execution."_ This is precisely the problem the project's batching mechanism solves.
 
 ### GEMV-micro: The Ultimate Test
 
@@ -326,7 +346,7 @@ Buffer for B matrices:
       |
       v
 Single Kernel Launch:
-cuBLASLt is told:
+cuBLAS is told:
   1. Batch Size: 3
   2. Start of Buffer A, B, C
   3. Stride for A, B, C
@@ -337,6 +357,7 @@ This technique is critical in real-world transformer inference. During the decod
 ```
 
 ## Results
+
 RTX 3060 12GB VRAM
 
 ```bash
